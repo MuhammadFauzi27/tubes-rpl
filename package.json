@@ -1,7 +1,12 @@
 {
   "type": "module",
   "scripts": {
-    "dev": "node src/server.js"
+    "dev": "node src/server.js",
+    "migrate": "node-pg-migrate up",
+    "migrate:create": "node-pg-migrate create",
+    "migrate:up": "node-pg-migrate up",
+    "migrate:down": "node-pg-migrate down",
+    "migrate:redo": "node-pg-migrate redo"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",
@@ -11,5 +16,8 @@
     "helmet": "^8.1.0",
     "morgan": "^1.10.1",
     "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "node-pg-migrate": "^8.0.4"
   }
 }
