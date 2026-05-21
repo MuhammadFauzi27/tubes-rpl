@@ -8,7 +8,12 @@ export const up = (pgm) => {
     table_number: { type: 'VARCHAR(10)', notNull: true, unique: true },
     capacity: { type: 'SMALLINT', notNull: true, default: 4, check: 'capacity > 0' },
     status: { type: 'table_status', notNull: true, default: 'available' },
-    qr_code_token: { type: 'VARCHAR(100)', notNull: true, unique: true, default: pgm.func("encode(gen_random_bytes(32), 'hex')") },
+    qr_code_token: {
+      type: 'VARCHAR(100)',
+      notNull: true,
+      unique: true,
+      default: pgm.func("md5(random()::text || clock_timestamp()::text)")
+    },
     floor: { type: 'SMALLINT', notNull: true, default: 1 },
     description: { type: 'VARCHAR(200)' },
     created_at: { type: 'TIMESTAMP', notNull: true, default: pgm.func('now()') },

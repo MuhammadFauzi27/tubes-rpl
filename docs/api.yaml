@@ -1,0 +1,2684 @@
+openapi: 3.1.0
+
+info:
+  title: Sistem Pemesanan Restoran API
+  version: 1.0.0
+  description: |
+    REST API untuk sistem pemesanan restoran berbasis QR code.
+
+    ## Alur Utama
+
+    ### Pelanggan (tanpa login)
+    1. Scan QR code di meja → `GET /tables/scan/{token}`
+    2. Lihat menu → `GET /menu`
+    3. Buat pesanan → `POST /orders`
+    4. Tambah/edit item → `POST /orders/{id}/items`
+    5. Bayar → `POST /orders/{id}/payment`
+    6. Cek status → `GET /orders/{id}/status`
+
+    ### Kasir / Admin (wajib login)
+    1. Login → `POST /auth/login`
+    2. Kelola menu → `/menu-items` (CRUD)
+    3. Monitor pesanan → `GET /orders`
+    4. Ubah status pesanan → `PATCH /orders/{id}/status`
+    5. Proses pembayaran → `PATCH /payments/{id}`
+
+    ### Waiter
+    1. Login → `POST /auth/login`
+    2. Lihat pesanan siap antar → `GET /orders?status=ready`
+    3. Konfirmasi pengantaran → `PATCH /orders/{id}/status`
+
+    ## Autentikasi
+    Endpoint publik (pelanggan) tidak memerlukan token.
+    Endpoint staff menggunakan **Bearer JWT** di header `Authorization`.
+
+  contact:
+    name: Tim Pengembang
+    email: dev@restoran.com
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Development server
+  - url: https://api.restoran.com/v1
+    description: Production server
+
+tags:
+  - name: Auth
+    description: Login dan manajemen sesi
+  - name: Tables
+    description: Informasi meja dan scan QR code
+  - name: Categories
+    description: Kategori menu
+  - name: Menu Items
+    description: Item menu — CRUD oleh kasir/admin
+  - name: Orders
+    description: Pesanan pelanggan
+  - name: Order Items
+    description: Item dalam pesanan
+  - name: Payments
+    description: Pembayaran pesanan
+  - name: Dashboard
+    description: Statistik dan laporan untuk admin/kasir
+
+# ============================================================
+# SECURITY SCHEMES
+# ============================================================
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token didapat dari `POST /auth/login`
+
+  # ============================================================
+  # REUSABLE SCHEMAS
+  # ============================================================
+  schemas:
+
+    # --- Common ---
+    UUID:
+      type: string
+      format: uuid
+      example: "550e8400-e29b-41d4-a716-446655440000"
+
+    Timestamp:
+      type: string
+      format: date-time
+      example: "2024-09-01T08:30:00.000Z"
+
+    PaginationMeta:
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 42
+        page:
+          type: integer
+          example: 1
+        per_page:
+          type: integer
+          example: 20
+        total_pages:
+          type: integer
+          example: 3
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Operasi berhasil"
+
+    ErrorResponse:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: "VALIDATION_ERROR"
+            message:
+              type: string
+              example: "Data yang dikirim tidak valid"
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+
+    # --- Enums ---
+    UserRole:
+      type: string
+      enum: [admin, kasir, waiter]
+      example: kasir
+
+    TableStatus:
+      type: string
+      enum: [available, occupied, reserved]
+      example: available
+
+    OrderStatus:
+      type: string
+      enum: [pending, confirmed, processing, ready, delivered, completed, cancelled]
+      example: pending
+
+    PaymentMethod:
+      type: string
+      enum: [cash, qris, debit, credit, transfer]
+      example: qris
+
+    PaymentStatus:
+      type: string
+      enum: [pending, paid, failed, refunded]
+      example: pending
+
+    # --- User ---
+    User:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        name:
+          type: string
+          example: "Budi Santoso"
+        email:
+          type: string
+          format: email
+          example: "kasir@restoran.com"
+        role:
+          $ref: '#/components/schemas/UserRole'
+        is_active:
+          type: boolean
+          example: true
+        last_login_at:
+          $ref: '#/components/schemas/Timestamp'
+          nullable: true
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    UserCreate:
+      type: object
+      required: [name, email, password, role]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+          example: "Budi Santoso"
+        email:
+          type: string
+          format: email
+          example: "kasir@restoran.com"
+        password:
+          type: string
+          minLength: 8
+          example: "P@ssw0rd!"
+        role:
+          $ref: '#/components/schemas/UserRole'
+
+    UserUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+        email:
+          type: string
+          format: email
+        role:
+          $ref: '#/components/schemas/UserRole'
+        is_active:
+          type: boolean
+
+    # --- Table ---
+    Table:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        table_number:
+          type: string
+          example: "A3"
+        capacity:
+          type: integer
+          example: 4
+        status:
+          $ref: '#/components/schemas/TableStatus'
+        floor:
+          type: integer
+          example: 1
+        description:
+          type: string
+          nullable: true
+          example: "Dekat jendela"
+        qr_code_token:
+          type: string
+          example: "a3f9b2c1d4e5f6a7b8c9d0e1f2a3b4c5"
+        qr_code_url:
+          type: string
+          description: URL gambar QR code siap cetak
+          example: "https://api.restoran.com/v1/tables/A3/qrcode.png"
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    TablePublic:
+      type: object
+      description: Info meja untuk pelanggan (tanpa token QR)
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        table_number:
+          type: string
+          example: "A3"
+        capacity:
+          type: integer
+          example: 4
+        status:
+          $ref: '#/components/schemas/TableStatus'
+        floor:
+          type: integer
+          example: 1
+
+    TableCreate:
+      type: object
+      required: [table_number, capacity]
+      properties:
+        table_number:
+          type: string
+          maxLength: 10
+          example: "A3"
+        capacity:
+          type: integer
+          minimum: 1
+          example: 4
+        floor:
+          type: integer
+          default: 1
+          example: 1
+        description:
+          type: string
+          maxLength: 200
+          example: "Dekat jendela"
+
+    TableUpdate:
+      type: object
+      properties:
+        table_number:
+          type: string
+          maxLength: 10
+        capacity:
+          type: integer
+          minimum: 1
+        status:
+          $ref: '#/components/schemas/TableStatus'
+        floor:
+          type: integer
+        description:
+          type: string
+          maxLength: 200
+
+    # --- Category ---
+    Category:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        name:
+          type: string
+          example: "Makanan Utama"
+        description:
+          type: string
+          nullable: true
+          example: "Hidangan utama nasi dan mie"
+        image_url:
+          type: string
+          nullable: true
+          example: "https://cdn.restoran.com/categories/makanan-utama.jpg"
+        sort_order:
+          type: integer
+          example: 1
+        is_active:
+          type: boolean
+          example: true
+        item_count:
+          type: integer
+          description: Jumlah menu aktif dalam kategori ini
+          example: 6
+
+    CategoryCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 80
+          example: "Makanan Utama"
+        description:
+          type: string
+          maxLength: 300
+        image_url:
+          type: string
+          format: uri
+        sort_order:
+          type: integer
+          default: 0
+
+    CategoryUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 80
+        description:
+          type: string
+          maxLength: 300
+        image_url:
+          type: string
+          format: uri
+        sort_order:
+          type: integer
+        is_active:
+          type: boolean
+
+    # --- MenuItem ---
+    MenuItem:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        category_id:
+          $ref: '#/components/schemas/UUID'
+        category:
+          $ref: '#/components/schemas/Category'
+        name:
+          type: string
+          example: "Nasi Goreng Spesial"
+        description:
+          type: string
+          nullable: true
+          example: "Nasi goreng dengan telur, ayam, dan kerupuk"
+        price:
+          type: number
+          format: decimal
+          example: 35000
+        image_url:
+          type: string
+          nullable: true
+          example: "https://cdn.restoran.com/menu/nasi-goreng.jpg"
+        is_available:
+          type: boolean
+          example: true
+        is_featured:
+          type: boolean
+          example: false
+        stock:
+          type: integer
+          nullable: true
+          description: "null = stok tidak terbatas"
+          example: null
+        sort_order:
+          type: integer
+          example: 0
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    MenuItemCreate:
+      type: object
+      required: [category_id, name, price]
+      properties:
+        category_id:
+          $ref: '#/components/schemas/UUID'
+        name:
+          type: string
+          maxLength: 150
+          example: "Nasi Goreng Spesial"
+        description:
+          type: string
+        price:
+          type: number
+          minimum: 0
+          example: 35000
+        image_url:
+          type: string
+          format: uri
+        is_available:
+          type: boolean
+          default: true
+        is_featured:
+          type: boolean
+          default: false
+        stock:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: "Kosongkan jika stok tidak terbatas"
+        sort_order:
+          type: integer
+          default: 0
+
+    MenuItemUpdate:
+      type: object
+      properties:
+        category_id:
+          $ref: '#/components/schemas/UUID'
+        name:
+          type: string
+          maxLength: 150
+        description:
+          type: string
+        price:
+          type: number
+          minimum: 0
+        image_url:
+          type: string
+          format: uri
+        is_available:
+          type: boolean
+        is_featured:
+          type: boolean
+        stock:
+          type: integer
+          minimum: 0
+          nullable: true
+        sort_order:
+          type: integer
+
+    # --- Order Item ---
+    OrderItem:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        order_id:
+          $ref: '#/components/schemas/UUID'
+        menu_item_id:
+          $ref: '#/components/schemas/UUID'
+        menu_item:
+          type: object
+          properties:
+            id:
+              $ref: '#/components/schemas/UUID'
+            name:
+              type: string
+              example: "Nasi Goreng Spesial"
+            image_url:
+              type: string
+              nullable: true
+        quantity:
+          type: integer
+          example: 2
+        unit_price:
+          type: number
+          example: 35000
+        subtotal:
+          type: number
+          example: 70000
+        note:
+          type: string
+          nullable: true
+          example: "Pedas level 2, tanpa bawang"
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    OrderItemCreate:
+      type: object
+      required: [menu_item_id, quantity]
+      properties:
+        menu_item_id:
+          $ref: '#/components/schemas/UUID'
+        quantity:
+          type: integer
+          minimum: 1
+          example: 2
+        note:
+          type: string
+          maxLength: 300
+          example: "Pedas level 2, tanpa bawang"
+
+    OrderItemUpdate:
+      type: object
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+        note:
+          type: string
+          maxLength: 300
+          nullable: true
+
+    # --- Order ---
+    Order:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        table_id:
+          $ref: '#/components/schemas/UUID'
+        table:
+          $ref: '#/components/schemas/TablePublic'
+        order_number:
+          type: string
+          example: "ORD-20240901-0001"
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        customer_note:
+          type: string
+          nullable: true
+          example: "Tolong pisahkan makanan anak-anak"
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        subtotal:
+          type: number
+          example: 105000
+        tax_rate:
+          type: number
+          example: 0.11
+        tax_amount:
+          type: number
+          example: 11550
+        total:
+          type: number
+          example: 116550
+        payment:
+          $ref: '#/components/schemas/Payment'
+          nullable: true
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    OrderCreate:
+      type: object
+      required: [table_id, items]
+      properties:
+        table_id:
+          $ref: '#/components/schemas/UUID'
+        customer_note:
+          type: string
+          maxLength: 500
+          example: "Tolong pisahkan makanan anak-anak"
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/OrderItemCreate'
+
+    OrderStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        note:
+          type: string
+          maxLength: 300
+          description: Catatan opsional untuk perubahan status ini
+
+    OrderStatusLog:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        old_status:
+          $ref: '#/components/schemas/OrderStatus'
+          nullable: true
+        new_status:
+          $ref: '#/components/schemas/OrderStatus'
+        changed_by:
+          type: object
+          nullable: true
+          properties:
+            id:
+              $ref: '#/components/schemas/UUID'
+            name:
+              type: string
+            role:
+              $ref: '#/components/schemas/UserRole'
+        note:
+          type: string
+          nullable: true
+        changed_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    # --- Payment ---
+    Payment:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/UUID'
+        order_id:
+          $ref: '#/components/schemas/UUID'
+        processed_by:
+          type: object
+          nullable: true
+          properties:
+            id:
+              $ref: '#/components/schemas/UUID'
+            name:
+              type: string
+        payment_method:
+          $ref: '#/components/schemas/PaymentMethod'
+        payment_status:
+          $ref: '#/components/schemas/PaymentStatus'
+        amount:
+          type: number
+          example: 116550
+        change_amount:
+          type: number
+          example: 3450
+          description: Kembalian untuk pembayaran cash
+        transaction_ref:
+          type: string
+          nullable: true
+          example: "QRIS-20240901-ABC123"
+        notes:
+          type: string
+          nullable: true
+        paid_at:
+          $ref: '#/components/schemas/Timestamp'
+          nullable: true
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    PaymentCreate:
+      type: object
+      required: [payment_method, amount]
+      properties:
+        payment_method:
+          $ref: '#/components/schemas/PaymentMethod'
+        amount:
+          type: number
+          minimum: 0
+          description: Jumlah uang yang dibayarkan pelanggan
+          example: 120000
+        transaction_ref:
+          type: string
+          description: Referensi transaksi (wajib untuk QRIS/transfer)
+          example: "QRIS-20240901-ABC123"
+        notes:
+          type: string
+
+    PaymentStatusUpdate:
+      type: object
+      required: [payment_status]
+      properties:
+        payment_status:
+          $ref: '#/components/schemas/PaymentStatus'
+        transaction_ref:
+          type: string
+        notes:
+          type: string
+
+    # --- Dashboard ---
+    DailySummary:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+          example: "2024-09-01"
+        total_orders:
+          type: integer
+          example: 48
+        completed_orders:
+          type: integer
+          example: 45
+        cancelled_orders:
+          type: integer
+          example: 3
+        total_revenue:
+          type: number
+          example: 5250000
+        total_tax:
+          type: number
+          example: 577500
+        avg_order_value:
+          type: number
+          example: 116667
+        payment_breakdown:
+          type: object
+          properties:
+            cash:
+              type: integer
+              example: 20
+            qris:
+              type: integer
+              example: 22
+            debit:
+              type: integer
+              example: 3
+
+  # ============================================================
+  # REUSABLE RESPONSES
+  # ============================================================
+  responses:
+    Unauthorized:
+      description: Token tidak valid atau tidak dikirim
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: UNAUTHORIZED
+              message: "Token autentikasi tidak valid atau sudah kedaluwarsa"
+
+    Forbidden:
+      description: Tidak memiliki akses ke resource ini
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: FORBIDDEN
+              message: "Role Anda tidak memiliki izin untuk aksi ini"
+
+    NotFound:
+      description: Resource tidak ditemukan
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: NOT_FOUND
+              message: "Data tidak ditemukan"
+
+    UnprocessableEntity:
+      description: Validasi gagal
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: VALIDATION_ERROR
+              message: "Data yang dikirim tidak valid"
+              details:
+                - field: "price"
+                  message: "Harga harus lebih dari 0"
+
+    Conflict:
+      description: Konflik data (misalnya nomor meja sudah ada)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  # ============================================================
+  # REUSABLE PARAMETERS
+  # ============================================================
+  parameters:
+    PathId:
+      name: id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/UUID'
+
+    QueryPage:
+      name: page
+      in: query
+      schema:
+        type: integer
+        default: 1
+        minimum: 1
+
+    QueryPerPage:
+      name: per_page
+      in: query
+      schema:
+        type: integer
+        default: 20
+        minimum: 1
+        maximum: 100
+
+# ============================================================
+# PATHS
+# ============================================================
+paths:
+
+  # ============================================================
+  # AUTH
+  # ============================================================
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login staff
+      description: Login untuk kasir, admin, atau waiter. Mengembalikan JWT token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: "kasir@restoran.com"
+                password:
+                  type: string
+                  example: "P@ssw0rd!"
+      responses:
+        "200":
+          description: Login berhasil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      token:
+                        type: string
+                        description: JWT token, masukkan ke header Authorization sebagai Bearer
+                        example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                      expires_at:
+                        $ref: '#/components/schemas/Timestamp'
+                      user:
+                        $ref: '#/components/schemas/User'
+        "401":
+          description: Email atau password salah
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error:
+                  code: INVALID_CREDENTIALS
+                  message: "Email atau password tidak valid"
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Logout berhasil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Profil user yang sedang login
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Data profil user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/User'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/change-password:
+    post:
+      tags: [Auth]
+      summary: Ganti password
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password, new_password_confirmation]
+              properties:
+                current_password:
+                  type: string
+                  example: "P@ssw0rd!"
+                new_password:
+                  type: string
+                  minLength: 8
+                  example: "N3wP@ssw0rd!"
+                new_password_confirmation:
+                  type: string
+                  example: "N3wP@ssw0rd!"
+      responses:
+        "200":
+          description: Password berhasil diganti
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  # ============================================================
+  # USERS (admin only)
+  # ============================================================
+
+  /users:
+    get:
+      tags: [Auth]
+      summary: Daftar semua user (admin only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/QueryPage'
+        - $ref: '#/components/parameters/QueryPerPage'
+        - name: role
+          in: query
+          schema:
+            $ref: '#/components/schemas/UserRole'
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Daftar user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [Auth]
+      summary: Tambah user baru (admin only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        "201":
+          description: User berhasil dibuat
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/User'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /users/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PathId'
+    get:
+      tags: [Auth]
+      summary: Detail user (admin only)
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Detail user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/User'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Auth]
+      summary: Update user (admin only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        "200":
+          description: User berhasil diupdate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/User'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+    delete:
+      tags: [Auth]
+      summary: Hapus user (admin only)
+      description: Soft delete — user dinonaktifkan, bukan dihapus permanen.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: User berhasil dinonaktifkan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================================
+  # TABLES
+  # ============================================================
+
+  /tables:
+    get:
+      tags: [Tables]
+      summary: Daftar semua meja (kasir/admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/TableStatus'
+        - name: floor
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Daftar meja beserta QR token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Table'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Tables]
+      summary: Tambah meja baru (admin only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TableCreate'
+      responses:
+        "201":
+          description: Meja berhasil dibuat
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Table'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /tables/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PathId'
+    get:
+      tags: [Tables]
+      summary: Detail meja (kasir/admin)
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Detail meja
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Table'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Tables]
+      summary: Update meja (kasir/admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TableUpdate'
+      responses:
+        "200":
+          description: Meja berhasil diupdate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Table'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Tables]
+      summary: Hapus meja (admin only)
+      description: Tidak bisa dihapus jika ada pesanan aktif di meja ini.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Meja berhasil dihapus
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Meja tidak bisa dihapus karena ada pesanan aktif
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /tables/{id}/regenerate-qr:
+    parameters:
+      - $ref: '#/components/parameters/PathId'
+    post:
+      tags: [Tables]
+      summary: Generate ulang QR code token (admin only)
+      description: |
+        Membuat token QR baru. Token lama langsung tidak berlaku.
+        Gunakan jika QR code bocor atau rusak.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: QR code berhasil di-regenerate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      qr_code_token:
+                        type: string
+                      qr_code_url:
+                        type: string
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /tables/scan/{token}:
+    get:
+      tags: [Tables]
+      summary: Scan QR code — entry point pelanggan
+      description: |
+        Endpoint pertama yang diakses pelanggan setelah scan QR.
+        Mengembalikan info meja. **Tidak memerlukan login.**
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "a3f9b2c1d4e5f6a7b8c9d0e1f2a3b4c5"
+      responses:
+        "200":
+          description: Meja valid, pelanggan bisa mulai memesan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/TablePublic'
+        "404":
+          description: QR code tidak valid atau meja tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Meja sedang tidak tersedia (reserved)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ============================================================
+  # CATEGORIES
+  # ============================================================
+
+  /categories:
+    get:
+      tags: [Categories]
+      summary: Daftar kategori menu
+      description: Publik — tidak memerlukan login. Menampilkan kategori aktif saja.
+      responses:
+        "200":
+          description: Daftar kategori
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Category'
+
+    post:
+      tags: [Categories]
+      summary: Tambah kategori (kasir/admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoryCreate'
+      responses:
+        "201":
+          description: Kategori berhasil dibuat
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Category'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /categories/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PathId'
+    get:
+      tags: [Categories]
+      summary: Detail kategori beserta daftar menu
+      responses:
+        "200":
+          description: Detail kategori + menu items di dalamnya
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/Category'
+                      - type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/MenuItem'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Categories]
+      summary: Update kategori (kasir/admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoryUpdate'
+      responses:
+        "200":
+          description: Kategori berhasil diupdate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Category'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Categories]
+      summary: Hapus kategori (admin only)
+      description: Tidak bisa dihapus jika masih ada menu item di kategori ini.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Kategori berhasil dihapus
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Kategori masih memiliki item menu
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ============================================================
+  # MENU ITEMS
+  # ============================================================
+
+  /menu:
+    get:
+      tags: [Menu Items]
+      summary: Daftar menu aktif (publik — untuk pelanggan)
+      description: Menampilkan semua menu yang `is_available = true`, dikelompokkan per kategori.
+      parameters:
+        - name: category_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/UUID'
+        - name: is_featured
+          in: query
+          schema:
+            type: boolean
+          description: Filter menu unggulan saja
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Cari berdasarkan nama menu
+      responses:
+        "200":
+          description: Daftar menu aktif
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MenuItem'
+
+  /menu-items:
+    get:
+      tags: [Menu Items]
+      summary: Daftar semua menu termasuk yang tidak aktif (kasir/admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: category_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/UUID'
+        - name: is_available
+          in: query
+          schema:
+            type: boolean
+        - name: search
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/QueryPage'
+        - $ref: '#/components/parameters/QueryPerPage'
+      responses:
+        "200":
+          description: Daftar semua menu
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MenuItem'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Menu Items]
+      summary: Tambah menu baru (kasir/admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MenuItemCreate'
+      responses:
+        "201":
+          description: Menu berhasil ditambahkan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/MenuItem'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /menu-items/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PathId'
+    get:
+      tags: [Menu Items]
+      summary: Detail menu item
+      responses:
+        "200":
+          description: Detail menu item
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/MenuItem'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Menu Items]
+      summary: Update menu item (kasir/admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MenuItemUpdate'
+      responses:
+        "200":
+          description: Menu berhasil diupdate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/MenuItem'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+    delete:
+      tags: [Menu Items]
+      summary: Hapus menu item (admin only)
+      description: Tidak bisa dihapus jika item sudah pernah masuk ke pesanan.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Menu berhasil dihapus
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Menu sudah pernah dipesan, tidak bisa dihapus (nonaktifkan saja)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /menu-items/{id}/toggle-availability:
+    parameters:
+      - $ref: '#/components/parameters/PathId'
+    patch:
+      tags: [Menu Items]
+      summary: Toggle ketersediaan menu (kasir/admin)
+      description: Shortcut untuk mengaktifkan / menonaktifkan menu tanpa mengirim seluruh body.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Status ketersediaan berhasil diubah
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        $ref: '#/components/schemas/UUID'
+                      is_available:
+                        type: boolean
+                        example: false
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================================
+  # ORDERS
+  # ============================================================
+
+  /orders:
+    get:
+      tags: [Orders]
+      summary: Daftar pesanan (kasir/admin/waiter)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          description: Filter berdasarkan satu atau beberapa status (pisahkan koma)
+          schema:
+            type: string
+          example: "pending,confirmed,processing"
+        - name: table_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/UUID'
+        - name: date
+          in: query
+          description: Filter tanggal (format YYYY-MM-DD), default hari ini
+          schema:
+            type: string
+            format: date
+          example: "2024-09-01"
+        - $ref: '#/components/parameters/QueryPage'
+        - $ref: '#/components/parameters/QueryPerPage'
+      responses:
+        "200":
+          description: Daftar pesanan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Order'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Orders]
+      summary: Buat pesanan baru (publik — pelanggan)
+      description: |
+        Pelanggan mengirim pesanan setelah memilih menu.
+        Tidak memerlukan login.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreate'
+            example:
+              table_id: "550e8400-e29b-41d4-a716-446655440000"
+              customer_note: "Tolong pisahkan makanan anak-anak"
+              items:
+                - menu_item_id: "660e8400-e29b-41d4-a716-446655440001"
+                  quantity: 2
+                  note: "Pedas level 2"
+                - menu_item_id: "770e8400-e29b-41d4-a716-446655440002"
+                  quantity: 1
+      responses:
+        "201":
+          description: Pesanan berhasil dibuat
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Order'
+        "404":
+          description: Meja atau menu item tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Salah satu menu item tidak tersedia atau stok habis
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /orders/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PathId'
+    get:
+      tags: [Orders]
+      summary: Detail pesanan lengkap
+      description: Bisa diakses pelanggan (tanpa login) maupun staff (dengan login).
+      responses:
+        "200":
+          description: Detail order lengkap beserta items dan payment
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Order'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /orders/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/PathId'
+    get:
+      tags: [Orders]
+      summary: Cek status pesanan (publik — untuk polling pelanggan)
+      description: Pelanggan bisa polling endpoint ini untuk tahu status pesanannya.
+      responses:
+        "200":
+          description: Status pesanan saat ini
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      order_id:
+                        $ref: '#/components/schemas/UUID'
+                      order_number:
+                        type: string
+                        example: "ORD-20240901-0001"
+                      status:
+                        $ref: '#/components/schemas/OrderStatus'
+                      updated_at:
+                        $ref: '#/components/schemas/Timestamp'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Orders]
+      summary: Ubah status pesanan (kasir/waiter)
+      description: |
+        Transisi status yang diizinkan:
+        - `pending` → `confirmed` (kasir)
+        - `confirmed` → `processing` (kasir)
+        - `processing` → `ready` (kasir)
+        - `ready` → `delivered` (waiter)
+        - `delivered` → `completed` (kasir — jika belum otomatis dari payment)
+        - `pending/confirmed` → `cancelled` (kasir/admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderStatusUpdate'
+      responses:
+        "200":
+          description: Status berhasil diubah
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Order'
+        "400":
+          description: Transisi status tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error:
+                  code: INVALID_STATUS_TRANSITION
+                  message: "Tidak bisa mengubah status dari 'delivered' ke 'pending'"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /orders/{id}/status-logs:
+    parameters:
+      - $ref: '#/components/parameters/PathId'
+    get:
+      tags: [Orders]
+      summary: Riwayat perubahan status pesanan
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Log perubahan status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrderStatusLog'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================================
+  # ORDER ITEMS
+  # ============================================================
+
+  /orders/{id}/items:
+    parameters:
+      - $ref: '#/components/parameters/PathId'
+    post:
+      tags: [Order Items]
+      summary: Tambah item ke pesanan (publik — pelanggan bisa tambah item)
+      description: |
+        Hanya bisa dilakukan selama pesanan masih berstatus `pending`.
+        Setelah dikonfirmasi kasir, pelanggan tidak bisa menambah item.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  items:
+                    $ref: '#/components/schemas/OrderItemCreate'
+      responses:
+        "200":
+          description: Item berhasil ditambahkan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Order'
+        "409":
+          description: Pesanan sudah dikonfirmasi atau item tidak tersedia
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /orders/{id}/items/{item_id}:
+    parameters:
+      - $ref: '#/components/parameters/PathId'
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/UUID'
+    patch:
+      tags: [Order Items]
+      summary: Update item pesanan (kasir/admin)
+      description: Update quantity atau catatan item. Hanya bisa saat status `pending` atau `confirmed`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderItemUpdate'
+      responses:
+        "200":
+          description: Item berhasil diupdate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/OrderItem'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Pesanan tidak bisa diedit pada status saat ini
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags: [Order Items]
+      summary: Hapus item dari pesanan (kasir/admin)
+      description: Hanya bisa saat status `pending` atau `confirmed`. Item terakhir tidak bisa dihapus.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Item berhasil dihapus
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          description: Tidak bisa menghapus item pada status pesanan ini
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ============================================================
+  # PAYMENTS
+  # ============================================================
+
+  /orders/{id}/payment:
+    parameters:
+      - $ref: '#/components/parameters/PathId'
+    post:
+      tags: [Payments]
+      summary: Buat pembayaran (publik — pelanggan inisiasi bayar)
+      description: |
+        Pelanggan memilih metode bayar dan menginisiasi pembayaran.
+        Untuk QRIS, sistem akan mengembalikan data QR yang perlu di-render.
+        Untuk cash, kasir yang akan konfirmasi pembayaran.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentCreate'
+            examples:
+              cash:
+                summary: Bayar cash
+                value:
+                  payment_method: cash
+                  amount: 120000
+              qris:
+                summary: Bayar QRIS
+                value:
+                  payment_method: qris
+                  amount: 116550
+      responses:
+        "201":
+          description: Pembayaran berhasil diinisiasi
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/Payment'
+                      - type: object
+                        properties:
+                          qris_data:
+                            type: string
+                            nullable: true
+                            description: Data QRIS string untuk di-render menjadi QR image (hanya untuk metode qris)
+                            example: "00020101021226..."
+        "409":
+          description: Pesanan sudah dibayar atau tidak bisa dibayar pada status ini
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /payments/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PathId'
+    get:
+      tags: [Payments]
+      summary: Detail pembayaran (kasir/admin)
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Detail pembayaran
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Payment'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Payments]
+      summary: Update status pembayaran (kasir/admin)
+      description: |
+        Kasir mengonfirmasi pembayaran cash, atau sistem callback untuk QRIS.
+        Saat status diubah ke `paid`, order otomatis menjadi `completed`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentStatusUpdate'
+            examples:
+              konfirmasi_cash:
+                summary: Konfirmasi pembayaran cash
+                value:
+                  payment_status: paid
+              qris_callback:
+                summary: Callback QRIS berhasil
+                value:
+                  payment_status: paid
+                  transaction_ref: "QRIS-20240901-ABC123"
+      responses:
+        "200":
+          description: Status pembayaran berhasil diupdate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Payment'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /payments:
+    get:
+      tags: [Payments]
+      summary: Daftar pembayaran (kasir/admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: payment_status
+          in: query
+          schema:
+            $ref: '#/components/schemas/PaymentStatus'
+        - name: payment_method
+          in: query
+          schema:
+            $ref: '#/components/schemas/PaymentMethod'
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+        - $ref: '#/components/parameters/QueryPage'
+        - $ref: '#/components/parameters/QueryPerPage'
+      responses:
+        "200":
+          description: Daftar pembayaran
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Payment'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================================
+  # DASHBOARD
+  # ============================================================
+
+  /dashboard/summary:
+    get:
+      tags: [Dashboard]
+      summary: Ringkasan statistik hari ini (kasir/admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: date
+          in: query
+          description: Tanggal yang ingin dilihat (default hari ini)
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Statistik hari ini
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/DailySummary'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /dashboard/active-orders:
+    get:
+      tags: [Dashboard]
+      summary: Semua pesanan aktif real-time (kasir/waiter)
+      description: Daftar pesanan yang belum selesai, untuk ditampilkan di layar monitor kasir.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Pesanan aktif dikelompokkan per status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      pending:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Order'
+                      confirmed:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Order'
+                      processing:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Order'
+                      ready:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Order'
+                      delivered:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Order'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /dashboard/sales-report:
+    get:
+      tags: [Dashboard]
+      summary: Laporan penjualan (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: start_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+          example: "2024-09-01"
+        - name: end_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+          example: "2024-09-30"
+        - name: group_by
+          in: query
+          schema:
+            type: string
+            enum: [day, week, month]
+            default: day
+      responses:
+        "200":
+          description: Laporan penjualan per periode
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      period:
+                        type: object
+                        properties:
+                          start_date:
+                            type: string
+                            format: date
+                          end_date:
+                            type: string
+                            format: date
+                      summary:
+                        type: object
+                        properties:
+                          total_orders:
+                            type: integer
+                          total_revenue:
+                            type: number
+                          total_tax:
+                            type: number
+                      breakdown:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/DailySummary'
+                      top_menu_items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            menu_item_id:
+                              $ref: '#/components/schemas/UUID'
+                            name:
+                              type: string
+                            total_qty:
+                              type: integer
+                            total_revenue:
+                              type: number
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /dashboard/table-map:
+    get:
+      tags: [Dashboard]
+      summary: Status semua meja real-time (kasir/admin)
+      description: Snapshot kondisi seluruh meja — mana yang terisi, tersedia, dan reserved.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Status semua meja
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/Table'
+                        - type: object
+                          properties:
+                            active_order:
+                              nullable: true
+                              type: object
+                              description: Pesanan aktif di meja ini (null jika kosong)
+                              properties:
+                                id:
+                                  $ref: '#/components/schemas/UUID'
+                                order_number:
+                                  type: string
+                                  example: "ORD-20240901-0005"
+                                status:
+                                  $ref: '#/components/schemas/OrderStatus'
+                                total:
+                                  type: number
+                                  example: 116550
+                                created_at:
+                                  $ref: '#/components/schemas/Timestamp'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+# ============================================================
+# WEBHOOKS
+# ============================================================
+webhooks:
+
+  qris-payment-callback:
+    post:
+      tags: [Payments]
+      summary: Callback dari payment gateway QRIS
+      description: |
+        Dipanggil payment gateway saat QRIS berhasil/gagal.
+        Server harus balas HTTP 200 untuk konfirmasi penerimaan.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transaction_ref, status, amount]
+              properties:
+                transaction_ref:
+                  type: string
+                  example: "QRIS-20240901-ABC123"
+                status:
+                  type: string
+                  enum: [success, failed]
+                  example: success
+                amount:
+                  type: number
+                  example: 116550
+                payment_id:
+                  type: string
+                  example: "550e8400-e29b-41d4-a716-446655440000"
+                paid_at:
+                  type: string
+                  format: date-time
+                gateway_ref:
+                  type: string
+                  description: Referensi internal payment gateway
+      responses:
+        "200":
+          description: Callback diterima
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received:
+                    type: boolean
+                    example: true
+
+  order-status-webhook:
+    post:
+      tags: [Orders]
+      summary: Notifikasi perubahan status order ke sistem eksternal
+      description: |
+        Server POST ke URL yang didaftarkan setiap kali status order berubah.
+        Berguna untuk layar dapur atau display status pelanggan.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event:
+                  type: string
+                  enum:
+                    - order.created
+                    - order.confirmed
+                    - order.processing
+                    - order.ready
+                    - order.delivered
+                    - order.completed
+                    - order.cancelled
+                  example: order.ready
+                timestamp:
+                  $ref: '#/components/schemas/Timestamp'
+                data:
+                  type: object
+                  properties:
+                    order_id:
+                      $ref: '#/components/schemas/UUID'
+                    order_number:
+                      type: string
+                      example: "ORD-20240901-0001"
+                    table_number:
+                      type: string
+                      example: "A3"
+                    status:
+                      $ref: '#/components/schemas/OrderStatus'
+                    total:
+                      type: number
+                      example: 116550
+      responses:
+        "200":
+          description: Webhook diterima
+
+# ============================================================
+# EXTENSION: Error Codes Reference
+# ============================================================
+x-error-codes:
+  UNAUTHORIZED:
+    description: Token JWT tidak ada, tidak valid, atau sudah expired
+    http_status: 401
+  FORBIDDEN:
+    description: User login tapi role tidak punya izin untuk aksi ini
+    http_status: 403
+  NOT_FOUND:
+    description: Resource dengan ID tersebut tidak ditemukan
+    http_status: 404
+  VALIDATION_ERROR:
+    description: Request body tidak memenuhi validasi (field wajib kosong, format salah, dll.)
+    http_status: 422
+  CONFLICT:
+    description: Konflik data — misalnya nomor meja sudah ada, order sudah dibayar
+    http_status: 409
+  INVALID_STATUS_TRANSITION:
+    description: Perubahan status yang diminta tidak valid
+    http_status: 400
+  INVALID_QR_TOKEN:
+    description: Token QR code tidak ditemukan atau sudah tidak berlaku
+    http_status: 404
+  MENU_UNAVAILABLE:
+    description: Menu item tidak tersedia atau stok habis
+    http_status: 409
+  ORDER_NOT_EDITABLE:
+    description: Pesanan tidak bisa diubah karena sudah melewati status yang diizinkan
+    http_status: 409
+  PAYMENT_ALREADY_EXISTS:
+    description: Pesanan ini sudah memiliki pembayaran aktif
+    http_status: 409
+  INSUFFICIENT_STOCK:
+    description: Stok menu tidak cukup untuk jumlah yang diminta
+    http_status: 409
+
+# ============================================================
+# EXTENSION: Role Permission Matrix
+# ============================================================
+x-role-permissions:
+  public:
+    description: Tanpa login — diakses pelanggan via QR
+    endpoints:
+      - "GET /tables/scan/{token}"
+      - "GET /categories"
+      - "GET /categories/{id}"
+      - "GET /menu"
+      - "GET /menu-items/{id}"
+      - "POST /orders"
+      - "GET /orders/{id}"
+      - "GET /orders/{id}/status"
+      - "POST /orders/{id}/items"
+      - "POST /orders/{id}/payment"
+
+  waiter:
+    description: Fokus pengantaran pesanan ke meja
+    inherits: public
+    additional_endpoints:
+      - "GET /orders?status=ready"
+      - "PATCH /orders/{id}/status (ready → delivered)"
+      - "GET /dashboard/active-orders"
+      - "GET /auth/me"
+      - "POST /auth/logout"
+      - "POST /auth/change-password"
+
+  kasir:
+    description: Operasional harian penuh
+    inherits: waiter
+    additional_endpoints:
+      - "GET /orders (semua status & tanggal)"
+      - "PATCH /orders/{id}/status (semua transisi)"
+      - "PATCH /orders/{id}/items/{item_id}"
+      - "DELETE /orders/{id}/items/{item_id}"
+      - "GET /payments"
+      - "GET /payments/{id}"
+      - "PATCH /payments/{id}"
+      - "POST /categories"
+      - "PATCH /categories/{id}"
+      - "POST /menu-items"
+      - "PATCH /menu-items/{id}"
+      - "PATCH /menu-items/{id}/toggle-availability"
+      - "GET /tables"
+      - "GET /tables/{id}"
+      - "PATCH /tables/{id}"
+      - "GET /dashboard/summary"
+      - "GET /dashboard/table-map"
+
+  admin:
+    description: Akses penuh — manajemen user, hapus data, laporan
+    inherits: kasir
+    additional_endpoints:
+      - "GET /users"
+      - "POST /users"
+      - "GET /users/{id}"
+      - "PATCH /users/{id}"
+      - "DELETE /users/{id}"
+      - "POST /tables"
+      - "DELETE /tables/{id}"
+      - "POST /tables/{id}/regenerate-qr"
+      - "DELETE /categories/{id}"
+      - "DELETE /menu-items/{id}"
+      - "GET /dashboard/sales-report"
+
+# ============================================================
+# EXTENSION: Status Transition Rules
+# ============================================================
+x-order-status-transitions:
+  description: Alur transisi status pesanan yang valid
+  transitions:
+    - from: pending
+      to: [confirmed, cancelled]
+      actor: kasir
+    - from: confirmed
+      to: [processing, cancelled]
+      actor: kasir
+    - from: processing
+      to: [ready]
+      actor: kasir
+    - from: ready
+      to: [delivered]
+      actor: waiter
+    - from: delivered
+      to: [completed]
+      actor: kasir
+    - from: completed
+      to: []
+      actor: none
+      note: Status final, tidak bisa diubah lagi
+    - from: cancelled
+      to: []
+      actor: none
+      note: Status final, tidak bisa diubah lagi
