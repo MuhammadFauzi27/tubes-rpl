@@ -1,42 +1,36 @@
 export const shorthands = undefined;
 
 export const up = (pgm) => {
-  pgm.createType("order_status", [
+  pgm.createType('order_status', [
     'pending',
-    'confirmed',
     'processing',
     'ready',
     'delivered',
     'completed',
-    'cancelled'
+    'cancelled',
   ]);
 
   pgm.createTable('orders', {
-    id: { type: 'uuid', primaryKey: true, default: pgm.func('gen_random_uuid()') },
-    table_id: { type: 'uuid', notNull: true, references: 'tables', onDelete: 'RESTRICT' },
-    order_number: { type: 'VARCHAR(20)', notNull: true, unique: true },
-    status: { type: 'order_status', notNull: true, default: 'pending' },
+    id:            { type: 'uuid',          primaryKey: true, default: pgm.func('gen_random_uuid()') },
+    table_id:      { type: 'uuid',          notNull: true, references: 'tables', onDelete: 'RESTRICT' },
+    order_number:  { type: 'VARCHAR(20)',   notNull: true, unique: true },
+    status:        { type: 'order_status',  notNull: true, default: 'pending' },
     customer_note: { type: 'TEXT' },
-    subtotal: { type: 'NUMERIC(14,2)', notNull: true, default: 0, check: 'subtotal >= 0' },
-    tax_rate: { type: 'NUMERIC(5,4)', notNull: true, default: 0.11 },
-    tax_amount: { type: 'NUMERIC(14,2)', notNull: true, default: 0 },
-    total: { type: 'NUMERIC(14,2)', notNull: true, default: 0 },
-    created_at: { type: 'TIMESTAMP', notNull: true, default: pgm.func('now()') },
-    updated_at: { type: 'TIMESTAMP', notNull: true, default: pgm.func('now()') },
+    subtotal:      { type: 'NUMERIC(14,2)', notNull: true, default: 0, check: 'subtotal >= 0' },
+    tax_rate:      { type: 'NUMERIC(5,4)',  notNull: true, default: 0.11 },
+    tax_amount:    { type: 'NUMERIC(14,2)', notNull: true, default: 0 },
+    total:         { type: 'NUMERIC(14,2)', notNull: true, default: 0 },
+    created_at:    { type: 'TIMESTAMP',     notNull: true, default: pgm.func('now()') },
+    updated_at:    { type: 'TIMESTAMP',     notNull: true, default: pgm.func('now()') },
   });
 
-  // Function: fn_generate_order_number
+  // ── Auto-generate order_number: ORD-YYYYMMDD-NNNN ───────────────────────────
   pgm.createFunction(
-    'fn_generate_order_number',
-    [],
-    {
-      returns: 'TRIGGER',
-      language: 'plpgsql',
-      replace: true,
-    },
+    'fn_generate_order_number', [],
+    { returns: 'TRIGGER', language: 'plpgsql', replace: true },
     `
     DECLARE
-        today_prefix  VARCHAR(12);
+        today_prefix  VARCHAR(14);
         daily_count   INT;
     BEGIN
         today_prefix := 'ORD-' || TO_CHAR(NOW(), 'YYYYMMDD') || '-';
@@ -50,21 +44,14 @@ export const up = (pgm) => {
   );
 
   pgm.createTrigger('orders', 'trg_orders_number', {
-    when: 'BEFORE',
-    operation: 'INSERT',
-    level: 'ROW',
+    when: 'BEFORE', operation: 'INSERT', level: 'ROW',
     function: 'fn_generate_order_number',
   });
 
-  // Function: fn_log_order_status
+  // ── Log perubahan status — trigger-nya dipasang di 09_order_status_logs.js ──
   pgm.createFunction(
-    'fn_log_order_status',
-    [],
-    {
-      returns: 'TRIGGER',
-      language: 'plpgsql',
-      replace: true,
-    },
+    'fn_log_order_status', [],
+    { returns: 'TRIGGER', language: 'plpgsql', replace: true },
     `
     BEGIN
         IF OLD.status IS DISTINCT FROM NEW.status THEN
@@ -76,23 +63,18 @@ export const up = (pgm) => {
     `
   );
 
-  // Trigger for fn_log_order_status will be created after order_status_logs table is created or we can use pgm.sql later.
-  // Actually, order_status_logs needs to exist. So I'll put it in 08_order_status_logs or use pgm.sql here if I'm sure of the order.
-
-  // Function: fn_update_table_status
+  // ── Otomatis ubah status meja saat order INSERT / berakhir ──────────────────
   pgm.createFunction(
-    'fn_update_table_status',
-    [],
-    {
-      returns: 'TRIGGER',
-      language: 'plpgsql',
-      replace: true,
-    },
+    'fn_update_table_status', [],
+    { returns: 'TRIGGER', language: 'plpgsql', replace: true },
     `
     BEGIN
         IF TG_OP = 'INSERT' THEN
+            -- Meja jadi occupied begitu ada pesanan baru masuk
             UPDATE tables SET status = 'occupied' WHERE id = NEW.table_id;
+
         ELSIF TG_OP = 'UPDATE' AND NEW.status IN ('completed', 'cancelled') THEN
+            -- Meja kembali available jika tidak ada pesanan aktif lain
             IF NOT EXISTS (
                 SELECT 1 FROM orders
                 WHERE table_id = NEW.table_id
@@ -108,33 +90,36 @@ export const up = (pgm) => {
   );
 
   pgm.createTrigger('orders', 'trg_table_status', {
-    when: 'AFTER',
-    operation: ['INSERT', 'UPDATE'],
-    level: 'ROW',
+    when: 'AFTER', operation: ['INSERT', 'UPDATE'], level: 'ROW',
     function: 'fn_update_table_status',
   });
 
   pgm.createTrigger('orders', 'trg_orders_updated_at', {
-    when: 'BEFORE',
-    operation: 'UPDATE',
-    level: 'ROW',
+    when: 'BEFORE', operation: 'UPDATE', level: 'ROW',
     function: 'fn_set_updated_at',
   });
 
-  pgm.createIndex('orders', 'table_id', { name: 'idx_orders_table_id' });
-  pgm.createIndex('orders', 'status', { name: 'idx_orders_status' });
-  pgm.createIndex('orders', 'created_at', { name: 'idx_orders_created_at', method: 'btree', reverse: true });
+  pgm.createIndex('orders', 'table_id',     { name: 'idx_orders_table_id' });
+  pgm.createIndex('orders', 'status',       { name: 'idx_orders_status' });
+  pgm.createIndex('orders', 'created_at',   { name: 'idx_orders_created_at', method: 'btree', reverse: true });
   pgm.createIndex('orders', 'order_number', { name: 'idx_orders_number' });
 
-  pgm.sql("COMMENT ON TABLE orders IS 'Pesanan per sesi, satu meja bisa punya banyak order'");
-  pgm.sql("COMMENT ON COLUMN orders.tax_rate IS 'Tarif pajak pada saat order dibuat (default 11% PPN)'");
-  pgm.sql("COMMENT ON COLUMN orders.total IS 'subtotal + tax_amount'");
+  // Index untuk query Live Orders (filter hari ini + status aktif)
+  pgm.sql(`
+    CREATE INDEX idx_orders_today_active
+    ON orders (created_at DESC, status)
+    WHERE status NOT IN ('completed', 'cancelled');
+  `);
+
+  pgm.sql("COMMENT ON TABLE  orders          IS 'Pesanan pelanggan — dibuat sekali saat checkout keranjang'");
+  pgm.sql("COMMENT ON COLUMN orders.tax_rate  IS 'Tarif pajak snapshot saat order dibuat (default 11% PPN)'");
+  pgm.sql("COMMENT ON COLUMN orders.total     IS 'subtotal + tax_amount, dihitung otomatis oleh trigger fn_recalc_order_total'");
 };
 
 export const down = (pgm) => {
   pgm.dropTable('orders');
-  pgm.dropFunction('fn_update_table_status', []);
-  pgm.dropFunction('fn_log_order_status', []);
+  pgm.dropFunction('fn_update_table_status',  []);
+  pgm.dropFunction('fn_log_order_status',      []);
   pgm.dropFunction('fn_generate_order_number', []);
   pgm.dropType('order_status');
 };

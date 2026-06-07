@@ -2,8 +2,29 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import config from "../config/index.js";
 import UserRepository from "../repositories/userRepository.js";
+import UserService from "./userService.js";
 
 const AuthService = {
+  async register(userData) {
+    // Default role for registration is 'admin' since it's the only one left
+    const user = await UserService.createUser({
+      ...userData,
+      role: 'admin'
+    });
+
+    const token = jwt.sign(
+      { id: user.id, role: user.role },
+      config.JWT_SECRET,
+      { expiresIn: config.JWT_EXPIRES_IN }
+    );
+
+    return {
+      token,
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      user
+    };
+  },
+
   async login(email, password) {
     const user = await UserRepository.findByEmail(email);
     if (!user || !user.is_active) {

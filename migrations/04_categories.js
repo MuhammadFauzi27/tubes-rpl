@@ -20,7 +20,8 @@ export const up = (pgm) => {
         ('Camilan',        'Gorengan dan makanan ringan',     2),
         ('Minuman Dingin', 'Es dan minuman segar',            3),
         ('Minuman Panas',  'Kopi dan teh',                   4),
-        ('Dessert',        'Makanan penutup',                 5)
+        ('Dessert',        'Makanan penutup',                 5),
+        ('Paket',        'Paket Menu',                 6)
     ON CONFLICT (name) DO NOTHING;
   `);
 };

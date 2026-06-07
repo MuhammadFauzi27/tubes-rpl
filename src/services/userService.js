@@ -48,7 +48,8 @@ const UserService = {
 
     return await UserRepository.create({
       ...userData,
-      password_hash
+      password_hash,
+      role: userData.role || 'admin'
     });
   },
 

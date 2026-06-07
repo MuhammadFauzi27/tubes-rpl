@@ -2,6 +2,20 @@ import AuthService from "../services/authService.js";
 import UserService from "../services/userService.js";
 
 const AuthController = {
+  async register(req, res, next) {
+    try {
+      const { name, email, password } = req.body;
+      const result = await AuthService.register({ name, email, password });
+      res.status(201).json({
+        success: true,
+        message: "User registered successfully",
+        data: result
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async login(req, res, next) {
     try {
       const { email, password } = req.body;
