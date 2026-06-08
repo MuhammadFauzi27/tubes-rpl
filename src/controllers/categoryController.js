@@ -1,22 +1,36 @@
 import CategoryService from "../services/categoryService.js";
 
 const CategoryController = {
-  async getAll(req, res, next) {
+  async getAllPublic(req, res, next) {
     try {
-      // Public view only shows active categories by default
-      // Admin might want to see all
-      const filters = {};
-      if (req.query.is_active !== undefined) {
-        filters.is_active = req.query.is_active === "true";
-      } else if (!req.user) {
-        // If no user (public), show only active
-        filters.is_active = true;
-      }
-
-      const categories = await CategoryService.getAllCategories(filters);
+      const categories = await CategoryService.getAllCategories(true);
       res.json({
         success: true,
         data: categories
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getAllAdmin(req, res, next) {
+    try {
+      const categories = await CategoryService.getAllCategories();
+      res.json({
+        success: true,
+        data: categories
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getById(req, res, next) {
+    try {
+      const category = await CategoryService.getCategoryById(req.params.id);
+      res.json({
+        success: true,
+        data: category
       });
     } catch (error) {
       next(error);
