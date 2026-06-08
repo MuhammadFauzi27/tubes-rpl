@@ -127,15 +127,54 @@ const OrderRepository = {
     }
   },
 
-  async updateStatus(id, status) {
-    const query = `
-      UPDATE orders
-      SET status = $1, updated_at = NOW()
-      WHERE id = $2
-      RETURNING id, order_number, status, total, created_at, updated_at
-    `;
-    const { rows } = await db.pool.query(query, [status, id]);
-    return rows[0];
+  async updateStatus(id, status, note = null, changedBy = null) {
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const oldOrderQuery = `SELECT status FROM orders WHERE id = $1 FOR UPDATE`;
+      const { rows: oldOrderRows } = await client.query(oldOrderQuery, [id]);
+      if (oldOrderRows.length === 0) {
+        throw new Error("Pesanan tidak ditemukan");
+      }
+      const oldStatus = oldOrderRows[0].status;
+
+      const updateQuery = `
+        UPDATE orders
+        SET status = $1, updated_at = NOW()
+        WHERE id = $2
+        RETURNING id, order_number, status, total, created_at, updated_at
+      `;
+      const { rows: updateRows } = await client.query(updateQuery, [status, id]);
+      const updatedOrder = updateRows[0];
+
+      // Manually insert into order_status_logs to include note and changed_by
+      // Note: This might cause a duplicate if the trigger trg_order_status_log is also active.
+      // But we need this to save the note and changed_by which the trigger doesn't handle.
+      if (oldStatus !== status) {
+        const logQuery = `
+          INSERT INTO order_status_logs (order_id, old_status, new_status, note, changed_by)
+          VALUES ($1, $2, $3, $4, $5)
+        `;
+        await client.query(logQuery, [id, oldStatus, status, note, changedBy]);
+      }
+
+      const itemCountQuery = `SELECT COUNT(*)::int as item_count FROM order_items WHERE order_id = $1`;
+      const { rows: itemCountRows } = await client.query(itemCountQuery, [id]);
+      updatedOrder.item_count = itemCountRows[0].item_count;
+
+      const tableNumberQuery = `SELECT table_number FROM tables WHERE id = (SELECT table_id FROM orders WHERE id = $1)`;
+      const { rows: tableRows } = await client.query(tableNumberQuery, [id]);
+      updatedOrder.table_number = tableRows[0].table_number;
+
+      await client.query('COMMIT');
+      return updatedOrder;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   },
 
   async getStatus(id) {

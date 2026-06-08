@@ -1,9 +1,10 @@
 import CategoryService from "../services/categoryService.js";
 
 const CategoryController = {
-  async getAllPublic(req, res, next) {
+  async getAll(req, res, next) {
     try {
-      const categories = await CategoryService.getAllCategories(true);
+      const is_active = req.query.is_active !== undefined ? req.query.is_active === 'true' : true;
+      const categories = await CategoryService.getAllCategories({ is_active });
       res.json({
         success: true,
         data: categories

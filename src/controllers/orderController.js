@@ -58,7 +58,12 @@ const OrderController = {
 
   async updateStatus(req, res, next) {
     try {
-      const order = await OrderService.updateOrderStatus(req.params.id, req.body);
+      const { status, note } = req.body;
+      const order = await OrderService.updateOrderStatus(req.params.id, {
+        status,
+        note,
+        changed_by: req.user.id
+      });
       res.json({
         success: true,
         data: order

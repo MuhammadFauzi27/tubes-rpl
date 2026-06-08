@@ -52,6 +52,19 @@ const MenuItemRepository = {
     return rows[0];
   },
 
+  async findByIds(ids) {
+    if (!ids || ids.length === 0) return [];
+    const query = `
+      SELECT m.*, 
+             json_build_object('id', c.id, 'name', c.name) as category
+      FROM menu_items m
+      JOIN categories c ON m.category_id = c.id
+      WHERE m.id = ANY($1)
+    `;
+    const { rows } = await db.pool.query(query, [ids]);
+    return rows;
+  },
+
   async create({ category_id, name, description, price, image_url, is_available, is_featured, sort_order }) {
     const query = `
       INSERT INTO menu_items (category_id, name, description, price, image_url, is_available, is_featured, sort_order)

@@ -88,7 +88,7 @@ const OrderService = {
   },
 
   async updateOrderStatus(id, statusData) {
-    const { status } = statusData;
+    const { status, note, changed_by } = statusData;
     const order = await OrderRepository.findById(id);
     
     if (!order) {
@@ -101,12 +101,12 @@ const OrderService = {
     // Validate status transition
     this._validateStatusTransition(order.status, status);
 
-    const updatedOrder = await OrderRepository.updateStatus(id, status);
+    const updatedOrder = await OrderRepository.updateStatus(id, status, note, changed_by);
     
     return {
       ...updatedOrder,
       total: parseFloat(updatedOrder.total),
-      item_count: parseInt(await OrderRepository.countAll({ status: undefined, date: undefined })) // This is simplified
+      item_count: parseInt(updatedOrder.item_count)
     };
   },
 
