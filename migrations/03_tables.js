@@ -6,6 +6,8 @@ export const up = (pgm) => {
   pgm.createTable('tables', {
     id:            { type: 'uuid',         primaryKey: true, default: pgm.func('gen_random_uuid()') },
     table_number:  { type: 'VARCHAR(10)',  notNull: true, unique: true },
+    capacity:      { type: 'INTEGER',      notNull: true, default: 2 },
+    floor:         { type: 'INTEGER',      notNull: true, default: 1 },
     status:        { type: 'table_status', notNull: true, default: 'available' },
     description:   { type: 'VARCHAR(200)' },
     qr_code_token: {
