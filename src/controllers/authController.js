@@ -8,7 +8,6 @@ const AuthController = {
       const result = await AuthService.register({ name, email, password });
       res.status(201).json({
         success: true,
-        message: "User registered successfully",
         data: result
       });
     } catch (error) {
@@ -31,12 +30,9 @@ const AuthController = {
 
   async logout(req, res, next) {
     try {
-      // In JWT, logout is usually handled on the client by deleting the token.
-      // Or we can implement a blacklist if needed.
-      // For now, simple success response.
       res.json({
         success: true,
-        message: "Logout successful"
+        message: "Operasi berhasil"
       });
     } catch (error) {
       next(error);
@@ -48,27 +44,12 @@ const AuthController = {
       const user = await UserService.getUserById(req.user.id);
       res.json({
         success: true,
-        data: user
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
-
-  async changePassword(req, res, next) {
-    try {
-      const { current_password, new_password, new_password_confirmation } = req.body;
-      
-      if (new_password !== new_password_confirmation) {
-        const error = new Error("New password confirmation does not match");
-        error.statusCode = 422;
-        throw error;
-      }
-
-      await AuthService.changePassword(req.user.id, current_password, new_password);
-      res.json({
-        success: true,
-        message: "Password successfully changed"
+        data: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          created_at: user.created_at
+        }
       });
     } catch (error) {
       next(error);

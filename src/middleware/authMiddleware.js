@@ -43,3 +43,22 @@ export const authorize = (...roles) => {
     next();
   };
 };
+
+export const authenticateSession = (req, res, next) => {
+  const sessionToken = req.headers["x-session-token"];
+  if (!sessionToken) {
+    return res.status(401).json({
+      success: false,
+      error: {
+        code: "UNAUTHORIZED",
+        message: "Session token (X-Session-Token) is missing"
+      }
+    });
+  }
+
+  // In a real implementation, we would verify the session token against the database/cache
+  // For now, we just attach it to the request.
+  req.session_token = sessionToken;
+  next();
+};
+

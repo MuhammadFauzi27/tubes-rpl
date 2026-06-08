@@ -6,29 +6,38 @@ import UserService from "./userService.js";
 
 const AuthService = {
   async register(userData) {
-    // Default role for registration is 'admin' since it's the only one left
     const user = await UserService.createUser({
       ...userData,
       role: 'admin'
     });
 
+    const expiresIn = config.JWT_EXPIRES_IN || "24h";
     const token = jwt.sign(
       { id: user.id, role: user.role },
       config.JWT_SECRET,
-      { expiresIn: config.JWT_EXPIRES_IN }
+      { expiresIn }
     );
+
+    // Simple calculation for expires_at based on 24h default if not parsed
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 24);
 
     return {
       token,
-      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      user
+      expires_at: expiresAt.toISOString(),
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        created_at: user.created_at
+      }
     };
   },
 
   async login(email, password) {
     const user = await UserRepository.findByEmail(email);
     if (!user || !user.is_active) {
-      const error = new Error("Invalid credentials or account disabled");
+      const error = new Error("Email atau password tidak valid");
       error.statusCode = 401;
       error.errorCode = "INVALID_CREDENTIALS";
       throw error;
@@ -36,48 +45,34 @@ const AuthService = {
 
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
-      const error = new Error("Invalid credentials");
+      const error = new Error("Email atau password tidak valid");
       error.statusCode = 401;
       error.errorCode = "INVALID_CREDENTIALS";
       throw error;
     }
 
+    const expiresIn = config.JWT_EXPIRES_IN || "24h";
     const token = jwt.sign(
       { id: user.id, role: user.role },
       config.JWT_SECRET,
-      { expiresIn: config.JWT_EXPIRES_IN }
+      { expiresIn }
     );
 
     await UserRepository.updateLastLogin(user.id);
 
-    // Remove password hash from user object
-    const { password_hash, ...userWithoutPassword } = user;
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 24);
 
     return {
       token,
-      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // Roughly 24h
-      user: userWithoutPassword
+      expires_at: expiresAt.toISOString(),
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        created_at: user.created_at
+      }
     };
-  },
-
-  async changePassword(userId, currentPassword, newPassword) {
-    const user = await UserRepository.findById(userId);
-    // We need password_hash which findById doesn't return in my current impl
-    // Let's use findByEmail or adjust findById. 
-    // Actually findByEmail returns it.
-    const userWithAuth = await UserRepository.findByEmail(user.email);
-
-    const isMatch = await bcrypt.compare(currentPassword, userWithAuth.password_hash);
-    if (!isMatch) {
-      const error = new Error("Current password incorrect");
-      error.statusCode = 401;
-      throw error;
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const newPasswordHash = await bcrypt.hash(newPassword, salt);
-
-    await UserRepository.updatePassword(userId, newPasswordHash);
   }
 };
 
