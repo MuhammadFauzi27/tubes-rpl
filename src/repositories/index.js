@@ -4,6 +4,7 @@ import CategoryRepository from "./categoryRepository.js";
 import MenuItemRepository from "./menuItemRepository.js";
 import OrderRepository from "./orderRepository.js";
 import PaymentRepository from "./paymentRepository.js";
+import DashboardRepository from "./dashboardRepository.js";
 
 export {
   UserRepository,
@@ -11,5 +12,6 @@ export {
   CategoryRepository,
   MenuItemRepository,
   OrderRepository,
-  PaymentRepository
+  PaymentRepository,
+  DashboardRepository
 };
