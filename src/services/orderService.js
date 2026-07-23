@@ -180,8 +180,7 @@ const OrderService = {
 
   _getStatusLabel(status) {
     const labels = {
-      pending: "Pesanan masuk, menunggu konfirmasi",
-      confirmed: "Pesanan dikonfirmasi",
+      pending: "Pesanan masuk, menunggu diproses",
       processing: "Pesanan sedang dimasak",
       ready: "Pesanan siap diantar",
       delivered: "Pesanan sudah diantar",
@@ -193,8 +192,7 @@ const OrderService = {
 
   _validateStatusTransition(currentStatus, nextStatus) {
     const transitions = {
-      pending: ['confirmed', 'cancelled'],
-      confirmed: ['processing', 'cancelled'],
+      pending: ['processing', 'cancelled'],
       processing: ['ready'],
       ready: ['delivered'],
       delivered: ['completed'],
@@ -202,7 +200,7 @@ const OrderService = {
       cancelled: []
     };
 
-    if (!transitions[currentStatus].includes(nextStatus)) {
+    if (!transitions[currentStatus]?.includes(nextStatus)) {
       const error = new Error(`Tidak bisa mengubah status dari '${currentStatus}' ke '${nextStatus}'`);
       error.statusCode = 400;
       error.errorCode = "INVALID_STATUS_TRANSITION";

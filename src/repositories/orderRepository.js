@@ -13,8 +13,8 @@ const OrderRepository = {
     let paramIndex = 1;
 
     if (status) {
-      const statuses = status.split(',');
-      query += ` AND o.status = ANY($${paramIndex++})`;
+      const statuses = status.split(',').map(s => s.trim());
+      query += ` AND o.status = ANY($${paramIndex++}::order_status[])`;
       params.push(statuses);
     }
 
@@ -38,8 +38,8 @@ const OrderRepository = {
     let paramIndex = 1;
 
     if (status) {
-      const statuses = status.split(',');
-      query += ` AND o.status = ANY($${paramIndex++})`;
+      const statuses = status.split(',').map(s => s.trim());
+      query += ` AND o.status = ANY($${paramIndex++}::order_status[])`;
       params.push(statuses);
     }
 

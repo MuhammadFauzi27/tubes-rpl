@@ -120,7 +120,7 @@ const TableService = {
     
     return {
       qr_code_token: result.qr_code_token,
-      qr_code_url: this._generateQRUrl(table.table_number)
+      qr_code_url: this._generateQRUrl(result.qr_code_token)
     };
   },
 
@@ -131,10 +131,12 @@ const TableService = {
     };
   },
 
-  _generateQRUrl(tableNumber) {
-    // Example: https://api.restoran.com/v1/qr/A3.png
+  _generateQRUrl(token) {
+    // Generate QR image URL using external qrserver.com API.
+    // The QR encodes the scan URL so customers can scan and be redirected.
     const baseUrl = process.env.BASE_URL || "http://localhost:3000";
-    return `${baseUrl}/api/v1/qr/${tableNumber}.png`;
+    const scanUrl = `${baseUrl}/api/v1/tables/scan/${token}`;
+    return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(scanUrl)}&format=png`;
   }
 };
 
