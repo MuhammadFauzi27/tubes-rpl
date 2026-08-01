@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import config from "../config/index.js";
 import UserRepository from "../repositories/userRepository.js";
 import UserService from "./userService.js";
+import db from "../databases/index.js";
 
 const AuthService = {
   async register(userData) {
@@ -10,6 +11,9 @@ const AuthService = {
       ...userData,
       role: 'admin'
     });
+
+    // Hapus semua seed menu items supaya akun baru mulai dari menu kosong
+    await db.pool.query("DELETE FROM menu_items");
 
     const expiresIn = config.JWT_EXPIRES_IN || "24h";
     const token = jwt.sign(

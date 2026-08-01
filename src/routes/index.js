@@ -7,6 +7,8 @@ import menuRoutes from "./menuRoutes.js";
 import orderRoutes from "./orderRoutes.js";
 import paymentRoutes from "./paymentRoutes.js";
 import dashboardRoutes from "./dashboardRoutes.js";
+import systemRoutes from "./systemRoutes.js";
+import uploadRoutes from "./uploadRoutes.js";
 
 const v1Router = Router();
 v1Router.use("/tables", tableRoutes);
@@ -16,6 +18,8 @@ v1Router.use("/menu", menuRoutes);
 v1Router.use("/orders", orderRoutes);
 v1Router.use("/payments", paymentRoutes);
 v1Router.use("/dashboard", dashboardRoutes);
+v1Router.use("/system", systemRoutes);
+v1Router.use("/uploads", uploadRoutes);
 
 v1Router.use("/auth", authRoutes);
 

@@ -1,10 +1,14 @@
 import createApp from "./app.js"
 import config from "./config/index.js"
+import { getLocalIpAddress } from "./utils/getIpAddress.js"
 
 const app = createApp()
 
-const server = app.listen(config.PORT, () => {
-  console.info(`Server running on port ${config.PORT}`)
+const server = app.listen(config.PORT, '0.0.0.0', () => {
+  const ip = getLocalIpAddress()
+  console.info(`✅ Server running:`)
+  console.info(`   Local  → http://localhost:${config.PORT}`)
+  console.info(`   Network→ http://${ip}:${config.PORT}  ← buka di HP`)
 })
 
 server.on("error", (err) => {

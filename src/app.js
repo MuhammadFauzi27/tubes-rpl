@@ -6,6 +6,11 @@ import helmet from "helmet";
 import cors from "cors";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const createApp = () => {
   dotenv.config();
@@ -16,10 +21,7 @@ const createApp = () => {
   app.use(cookieParser());
   app.use(
     cors({
-      origin: [
-        "http://localhost:5174",
-        "http://localhost:5173",
-      ],
+      origin: true,
       credentials: true,
       methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     })
@@ -28,7 +30,16 @@ const createApp = () => {
   app.use(express.json({ limit: "4mb" }));
   app.use(express.urlencoded({ extended: false }));
   app.use(morgan("dev"));
-  app.use(helmet());
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: "cross-origin" },
+    })
+  );
+
+  // Static file serving — gambar yang diupload bisa diakses via /uploads/...
+  const uploadsDir = path.resolve(__dirname, "../../uploads");
+  app.use("/uploads", express.static(uploadsDir));
+
   app.use("/api", appRoute);
   app.use(errorMiddleware);
 

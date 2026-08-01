@@ -124,19 +124,13 @@ const TableService = {
     };
   },
 
+  /**
+   * Format table data.
+   * qr_code_url tidak di-generate di backend agar tidak terikat IP.
+   * Frontend akan build URL dinamis menggunakan window.location.hostname.
+   */
   _formatTable(table) {
-    return {
-      ...table,
-      qr_code_url: this._generateQRUrl(table.table_number)
-    };
-  },
-
-  _generateQRUrl(token) {
-    // Generate QR image URL using external qrserver.com API.
-    // The QR encodes the scan URL so customers can scan and be redirected.
-    const baseUrl = process.env.BASE_URL || "http://localhost:3000";
-    const scanUrl = `${baseUrl}/api/v1/tables/scan/${token}`;
-    return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(scanUrl)}&format=png`;
+    return { ...table };
   }
 };
 
