@@ -120,7 +120,6 @@ const TableService = {
     
     return {
       qr_code_token: result.qr_code_token,
-      qr_code_url: this._generateQRUrl(result.qr_code_token)
     };
   },
 

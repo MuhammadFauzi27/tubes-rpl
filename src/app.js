@@ -37,7 +37,7 @@ const createApp = () => {
   );
 
   // Static file serving — gambar yang diupload bisa diakses via /uploads/...
-  const uploadsDir = path.resolve(__dirname, "../../uploads");
+  const uploadsDir = path.resolve(__dirname, "../uploads");
   app.use("/uploads", express.static(uploadsDir));
 
   app.use("/api", appRoute);
