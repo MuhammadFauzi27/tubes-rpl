@@ -40,6 +40,23 @@ const PaymentController = {
         error: error.message
       });
     }
+  },
+
+  /**
+   * Konfirmasi pembayaran manual oleh admin (mock — tanpa payment gateway real).
+   * PATCH /payments/:id/confirm
+   */
+  async confirm(req, res, next) {
+    try {
+      const payment = await PaymentService.confirmPayment(req.params.id);
+      res.json({
+        success: true,
+        message: 'Pembayaran berhasil dikonfirmasi',
+        data: payment
+      });
+    } catch (error) {
+      next(error);
+    }
   }
 };
 

@@ -7,7 +7,14 @@ const DashboardRepository = {
         (SELECT COUNT(*) FROM orders WHERE DATE(created_at) = CURRENT_DATE) as total_orders,
         (SELECT COUNT(*) FROM orders WHERE DATE(created_at) = CURRENT_DATE AND status = 'completed') as completed_orders,
         (SELECT COUNT(*) FROM orders WHERE DATE(created_at) = CURRENT_DATE AND status = 'cancelled') as cancelled_orders,
-        COALESCE((SELECT total_pendapatan FROM v_daily_revenue WHERE tanggal = CURRENT_DATE), 0) as total_revenue
+        COALESCE(
+          (SELECT SUM(o.total)
+           FROM orders o
+           JOIN payments p ON p.order_id = o.id
+           WHERE DATE(o.created_at) = CURRENT_DATE
+             AND p.payment_status = 'paid'),
+          0
+        ) as total_revenue
     `;
     const { rows } = await db.pool.query(query);
     return {
@@ -55,10 +62,12 @@ const DashboardRepository = {
   async getRevenueStats(startDate, endDate) {
     const query = `
       SELECT
-        SUM(total_pendapatan) as total_revenue,
-        SUM(total_orders) as total_orders
-      FROM v_daily_revenue
-      WHERE tanggal BETWEEN $1 AND $2
+        COALESCE(SUM(o.total), 0) as total_revenue,
+        COUNT(o.id) as total_orders
+      FROM orders o
+      JOIN payments p ON p.order_id = o.id
+      WHERE DATE(o.created_at) BETWEEN $1 AND $2
+        AND p.payment_status = 'paid'
     `;
     const { rows } = await db.pool.query(query, [startDate, endDate]);
     return {
@@ -71,13 +80,24 @@ const DashboardRepository = {
     const query = `
       WITH date_range AS (
         SELECT generate_series($1::date, $2::date, '1 day')::date as date
+      ),
+      paid_per_day AS (
+        SELECT
+          DATE(o.created_at) as date,
+          COUNT(o.id) as successful_transactions,
+          SUM(o.total) as revenue
+        FROM orders o
+        JOIN payments p ON p.order_id = o.id
+        WHERE p.payment_status = 'paid'
+          AND DATE(o.created_at) BETWEEN $1 AND $2
+        GROUP BY DATE(o.created_at)
       )
       SELECT
         dr.date,
-        COALESCE(vr.successful_transactions, 0) as successful_transactions,
-        COALESCE(vr.total_pendapatan, 0) as revenue
+        COALESCE(ppd.successful_transactions, 0) as successful_transactions,
+        COALESCE(ppd.revenue, 0) as revenue
       FROM date_range dr
-      LEFT JOIN v_daily_revenue vr ON dr.date = vr.tanggal
+      LEFT JOIN paid_per_day ppd ON ppd.date = dr.date
       ORDER BY dr.date ASC
     `;
     const { rows } = await db.pool.query(query, [startDate, endDate]);
@@ -91,15 +111,20 @@ const DashboardRepository = {
   async getTopMenuItems(startDate, endDate, limit = 10) {
     const query = `
       SELECT
-        menu_item_id,
-        name,
-        image_url,
-        category_name,
-        SUM(total_qty) as total_qty,
-        SUM(total_revenue) as total_revenue
-      FROM v_top_menu_items
-      WHERE tanggal BETWEEN $1 AND $2
-      GROUP BY menu_item_id, name, image_url, category_name
+        mi.id as menu_item_id,
+        mi.name,
+        mi.image_url,
+        c.name as category_name,
+        SUM(oi.quantity) as total_qty,
+        SUM(oi.subtotal) as total_revenue
+      FROM order_items oi
+      JOIN menu_items mi ON mi.id = oi.menu_item_id
+      JOIN categories c  ON c.id  = mi.category_id
+      JOIN orders     o  ON o.id  = oi.order_id
+      JOIN payments   p  ON p.order_id = o.id
+      WHERE DATE(o.created_at) BETWEEN $1 AND $2
+        AND p.payment_status = 'paid'
+      GROUP BY mi.id, mi.name, mi.image_url, c.name
       ORDER BY total_qty DESC
       LIMIT $3
     `;

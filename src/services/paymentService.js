@@ -78,7 +78,38 @@ const PaymentService = {
       transaction_ref: transaction_ref,
       notes: `Callback received with status: ${status}`
     });
-    // Note: Database trigger fn_set_paid_at will handle order status update to 'completed'
+    // Note: Trigger fn_set_paid_at hanya mencatat paid_at.
+    // Status order TIDAK diubah otomatis — tetap dikelola admin via Kanban.
+  },
+
+  /**
+   * Konfirmasi pembayaran secara manual oleh admin.
+   * Digunakan sebagai simulasi webhook untuk keperluan development/demo.
+   * PATCH /payments/:id/confirm
+   */
+  async confirmPayment(paymentId) {
+    const payment = await PaymentRepository.findById(paymentId);
+    if (!payment) {
+      const error = new Error("Pembayaran tidak ditemukan");
+      error.statusCode = 404;
+      error.code = "NOT_FOUND";
+      throw error;
+    }
+
+    if (payment.payment_status === 'paid') {
+      const error = new Error("Pembayaran sudah dikonfirmasi sebelumnya");
+      error.statusCode = 409;
+      error.code = "ALREADY_PAID";
+      throw error;
+    }
+
+    return await PaymentRepository.updateStatus(payment.id, {
+      status: 'paid',
+      transaction_ref: payment.transaction_ref || `MANUAL-${Date.now()}`,
+      notes: 'Dikonfirmasi manual oleh admin'
+    });
+    // Note: Trigger fn_set_paid_at hanya mencatat paid_at.
+    // Status order TIDAK diubah otomatis — tetap dikelola admin via Kanban.
   }
 };
 
